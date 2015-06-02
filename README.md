@@ -1,1 +1,1 @@
-# DNSoverHTTP
+# goDNSoverHTTP
