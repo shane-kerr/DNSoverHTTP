@@ -65,6 +65,7 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		return
 	}
 	var requestBody []byte
+	//_, err = resp.Body.Read(requestBody)
 	nRead, err := resp.Body.Read(requestBody)
 	if err != nil {
 		// these need to be separate checks, otherwise you will get a nil-reference
@@ -74,6 +75,7 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		return
 	}
 	//I not sure whether I should return server fail directly
+	//I just found there is a bug here. Body.Read can not read all the contents out, I don't know how to solve it.
 	if nRead < (int)(resp.ContentLength) {
 		SRVFAIL(w, request)
 		_D("fail to read all HTTP content")
@@ -177,5 +179,9 @@ func main() {
 				log.Fatal(err)
 			}
 		}()
+	}
+	for {
+		UDPproxyer.NOW = time.Now().UTC().Unix()
+		time.Sleep(time.Duration(1) * time.Second)
 	}
 }
