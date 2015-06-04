@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"dns-master"
 	"flag"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -53,20 +54,20 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 	}
 	if this.TransPro == UDPcode {
 		req.Header.Add("X-Proxy-DNS-Transport", "udp")
-	}
-	if this.TransPro == TCPcode {
+	} else if this.TransPro == TCPcode {
 		req.Header.Add("X-Proxy-DNS-Transport", "tcp")
 	}
 	req.Header.Add("Content-Type", "application/X-DNSoverHTTP")
 	resp, err := http.DefaultClient.Do(req)
+	defer resp.Body.Close()
 	if err != nil {
 		SRVFAIL(w, request)
 		_D("error in HTTP post request, error message: %s", err)
 		return
 	}
 	var requestBody []byte
-	//_, err = resp.Body.Read(requestBody)
-	nRead, err := resp.Body.Read(requestBody)
+	requestBody, err = ioutil.ReadAll(resp.Body)
+	//	nRead, err := resp.Body.Read(requestBody)
 	if err != nil {
 		// these need to be separate checks, otherwise you will get a nil-reference
 		// when you print the error message below!
@@ -76,7 +77,7 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 	}
 	//I not sure whether I should return server fail directly
 	//I just found there is a bug here. Body.Read can not read all the contents out, I don't know how to solve it.
-	if nRead < (int)(resp.ContentLength) {
+	if len(requestBody) < (int)(resp.ContentLength) {
 		SRVFAIL(w, request)
 		_D("fail to read all HTTP content")
 		return
@@ -90,11 +91,9 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 	}
 	err = w.WriteMsg(&DNSreponse)
 	if err != nil {
-		//I don't think we need to call SRVFALL here since we already fail to send response back
 		_D("error in sending DNS response back, error message: %s", err)
 		return
 	}
-	// possibly we want to check the return of WriteMsg() and log it if an error happens?
 }
 
 func SRVFAIL(w dns.ResponseWriter, req *dns.Msg) {
