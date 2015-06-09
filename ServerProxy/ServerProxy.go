@@ -40,9 +40,6 @@ const UDPcode = 1
 const TCPcode = 2
 
 //not sure how to make a server fail, error 501?
-func SRVFAIL(w http.ResponseWriter, r *http.Request) {
-
-}
 func (this Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	TransProString := r.Header.Get("X-Proxy-DNS-Transport")
 	if TransProString == "tcp" {
@@ -51,37 +48,37 @@ func (this Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		this.TransPro = UDPcode
 	} else {
 		_D("Transport protol not udp or tcp")
-		SRVFAIL(w, r)
+		http.Error(w, "unknown transport protocol", 415)
 		return
 	}
-	contentTypeStr := r.Header.Get("Content-Type")
+	contentTypeStr := r.Header.Get("application/X-DNSoverHTTP")
 	if contentTypeStr != "Content-Type" {
 		_D("Content-Type illegal")
-		SRVFAIL(w, r)
+		http.Error(w, "unknown content type", 415)
 		return
 	}
 	var requestBody []byte
 	requestBody, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		SRVFAIL(w, r)
-		_D("error in reading HTTP response, error message: %s", err)
+		http.Error(w, "error in reading request", 400)
+		_D("error in reading HTTP request, error message: %s", err)
 		return
 	}
 	if len(requestBody) < (int)(r.ContentLength) {
-		SRVFAIL(w, r)
+		http.Error(w, "error in reading request", 400)
 		_D("fail to read all HTTP content")
 		return
 	}
 	var dnsRequest dns.Msg
 	err = dnsRequest.Unpack(requestBody)
 	if err != nil {
-		SRVFAIL(w, r)
+		http.Error(w, "bad DNS request", 400)
 		_D("error in packing HTTP response to DNS, error message: %s", err)
 		return
 	}
 	dnsClient := new(dns.Client)
 	if dnsClient == nil {
-		SRVFAIL(w, r)
+		http.Error(w, "Server Error", 500)
 		_D("cannot create DNS client")
 		return
 	}
@@ -92,8 +89,20 @@ func (this Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[rand.Intn(this.s_len)])
 	if err != nil {
 		_D("error in communicate with resolver, error message: %s", err)
+		http.Error(w, "Server Error", 500)
 	} else {
 		_D("request took %s", RTT)
+	}
+	response_bytes, err := dnsResponse.Pack()
+	if err != nil {
+		http.Error(w, "error packing reply", 500)
+		_D("error in packing request, error message: %s", err)
+		return
+	}
+	_, err = w.Write(response_bytes)
+	if err != nil {
+		_D("Can not write response rightly, error message: %s", err)
+		return
 	}
 	//don't know how to creat a response here
 }
