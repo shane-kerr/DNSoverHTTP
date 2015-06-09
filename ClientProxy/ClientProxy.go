@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"dns-master"
 	"flag"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -38,10 +39,7 @@ func _D(fmt string, v ...interface{}) {
 // Probably the first is the easiest.
 
 func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
-	proxy_req := *request
-	request_bytes, err := proxy_req.Pack()
-	// why not just pack from request directly? (I haven't tried this...)
-	//request_bytes, err := reques.Pack()
+	request_bytes, err := request.Pack() //I am not sure it is better to pack directly or using a pointer
 	if err != nil {
 		SRVFAIL(w, request)
 		_D("error in packing request, error message: %s", err)
@@ -49,22 +47,39 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 	}
 	postBytesReader := bytes.NewReader(request_bytes)
 	req, err := http.NewRequest("POST", this.SERVERS[0], postBytesReader)
-	// ^^^ we should check err here... always check err!
-	req.Header.Add("X-Proxy-DNS-Transport", "udp") //need to figure out how to know the query is from TCP or UDP
+	if err != nil {
+		SRVFAIL(w, request)
+		_D("error in creating HTTP request, error message: %s", err)
+		return
+	}
+	if this.TransPro == UDPcode {
+		req.Header.Add("X-Proxy-DNS-Transport", "udp")
+	} else if this.TransPro == TCPcode {
+		req.Header.Add("X-Proxy-DNS-Transport", "tcp")
+	}
 	req.Header.Add("Content-Type", "application/X-DNSoverHTTP")
 	resp, err := http.DefaultClient.Do(req)
+	defer resp.Body.Close()
 	if err != nil {
 		SRVFAIL(w, request)
 		_D("error in HTTP post request, error message: %s", err)
 		return
 	}
 	var requestBody []byte
-	nRead, err := resp.Body.Read(requestBody)
-	if err != nil || nRead < (int)(resp.ContentLength) {
+	requestBody, err = ioutil.ReadAll(resp.Body)
+	//	nRead, err := resp.Body.Read(requestBody)
+	if err != nil {
 		// these need to be separate checks, otherwise you will get a nil-reference
-                // when you print the error message below!
+		// when you print the error message below!
 		SRVFAIL(w, request)
 		_D("error in reading HTTP response, error message: %s", err)
+		return
+	}
+	//I not sure whether I should return server fail directly
+	//I just found there is a bug here. Body.Read can not read all the contents out, I don't know how to solve it.
+	if len(requestBody) < (int)(resp.ContentLength) {
+		SRVFAIL(w, request)
+		_D("fail to read all HTTP content")
 		return
 	}
 	var DNSreponse dns.Msg
@@ -74,8 +89,11 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in packing HTTP response to DNS, error message: %s", err)
 		return
 	}
-	w.WriteMsg(&DNSreponse)
-	// possibly we want to check the return of WriteMsg() and log it if an error happens?
+	err = w.WriteMsg(&DNSreponse)
+	if err != nil {
+		_D("error in sending DNS response back, error message: %s", err)
+		return
+	}
 }
 
 func SRVFAIL(w dns.ResponseWriter, req *dns.Msg) {
@@ -93,7 +111,11 @@ type ClientProxy struct {
 	NOW         int64
 	giant       *sync.RWMutex
 	timeout     time.Duration
+	TransPro    int //specify for transmit protocol
 }
+
+const UDPcode = 1
+const TCPcode = 2
 
 func main() {
 	var (
@@ -114,7 +136,7 @@ func main() {
 
 	flag.Parse()
 	servers := strings.Split(S_SERVERS, ",")
-	proxyer := ClientProxy{
+	UDPproxyer := ClientProxy{
 		giant:       new(sync.RWMutex),
 		ACCESS:      make([]*net.IPNet, 0),
 		SERVERS:     servers,
@@ -122,28 +144,43 @@ func main() {
 		NOW:         time.Now().UTC().Unix(),
 		entries:     0,
 		timeout:     time.Duration(timeout) * time.Second,
-		max_entries: max_entries}
-
+		max_entries: max_entries,
+		TransPro:    UDPcode}
+	TCPproxyer := ClientProxy{
+		giant:       new(sync.RWMutex),
+		ACCESS:      make([]*net.IPNet, 0),
+		SERVERS:     servers,
+		s_len:       len(servers),
+		NOW:         time.Now().UTC().Unix(),
+		entries:     0,
+		timeout:     time.Duration(timeout) * time.Second,
+		max_entries: max_entries,
+		TransPro:    TCPcode}
 	for _, mask := range strings.Split(S_ACCESS, ",") {
 		_, cidr, err := net.ParseCIDR(mask)
 		if err != nil {
 			panic(err)
 		}
 		_D("added access for %s\n", mask)
-		proxyer.ACCESS = append(proxyer.ACCESS, cidr)
+		UDPproxyer.ACCESS = append(UDPproxyer.ACCESS, cidr)
+		TCPproxyer.ACCESS = append(TCPproxyer.ACCESS, cidr)
 	}
 	for _, addr := range strings.Split(S_LISTEN, ",") {
 		_D("listening @ %s\n", addr)
 		go func() {
-			if err := dns.ListenAndServe(addr, "udp", proxyer); err != nil {
+			if err := dns.ListenAndServe(addr, "udp", UDPproxyer); err != nil {
 				log.Fatal(err)
 			}
 		}()
 
 		go func() {
-			if err := dns.ListenAndServe(addr, "tcp", proxyer); err != nil {
+			if err := dns.ListenAndServe(addr, "tcp", TCPproxyer); err != nil {
 				log.Fatal(err)
 			}
 		}()
+	}
+	for {
+		UDPproxyer.NOW = time.Now().UTC().Unix()
+		time.Sleep(time.Duration(1) * time.Second)
 	}
 }
