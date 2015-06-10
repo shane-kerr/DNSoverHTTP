@@ -59,7 +59,7 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 	}
 	req.Header.Add("Content-Type", "application/X-DNSoverHTTP")
 	resp, err := http.DefaultClient.Do(req)
-	defer resp.Body.Close()
+	//	defer resp.Body.Close()
 	if err != nil {
 		SRVFAIL(w, request)
 		_D("error in HTTP post request, error message: %s", err)
