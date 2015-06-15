@@ -91,8 +91,14 @@ func (this Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_D("error in communicate with resolver, error message: %s", err)
 		http.Error(w, "Server Error", 500)
+		return
 	} else {
 		_D("request took %s", RTT)
+	}
+	if dnsResponse == nil {
+		_D("no response back")
+		http.Error(w, "Server Error:No Recursive response", 500)
+		return
 	}
 	response_bytes, err := dnsResponse.Pack()
 	if err != nil {
