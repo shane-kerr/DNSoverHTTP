@@ -86,8 +86,8 @@ func (this Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dnsClient.WriteTimeout = this.timeout
 	dnsClient.Net = TransProString
 	//will use a parameter to let user address resolver in future
-	//	dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[rand.Intn(this.s_len)])
-	dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[0]) //if there is only one server in servers, upper code suffers a panic error
+	dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[rand.Intn(len(this.SERVERS))])
+	//dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[0])
 	if err != nil {
 		_D("error in communicate with resolver, error message: %s", err)
 		http.Error(w, "Server Error", 500)

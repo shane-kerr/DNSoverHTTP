@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -22,21 +23,22 @@ func _D(fmt string, v ...interface{}) {
 		log.Printf(fmt, v...)
 	}
 }
-
-// I am not sure if we can know the request is from UDP or TCP.
-// May be we need two proxy to listen TCP and UDP differently since the parameter is different
-
-// Unfortunately neither the dns.ResponseWriter interface nor the dns.Msg structure
-// tell us whether a message came in with TCP or UDP. (It is in the dns.response
-// structure, but we don't have access to that.)
-
-// There are at least two ways to do this:
-//
-// 1. We can have two separate ClientProxy structures, and include an "ip_protocol"
-//    field in each structure, one with "tcp" and one with "udp".
-// 2. We can define a ClientProxyUDP and a ClientProxyTCP structure.
-//
-// Probably the first is the easiest.
+func (this ClientProxy) getServerIP(domain string) string {
+	dnsClient := new(dns.Client)
+	if dnsClient == nil {
+		return ""
+	}
+	dnsClient.WriteTimeout = this.timeout
+	dnsClient.ReadTimeout = this.timeout
+	dnsRequest := new(dns.Msg)
+	dnsRequest.SetQuestion("domain", dns.TypeA)
+	dnsResponse, _, err := dnsClient.Exchange(dnsRequest, this.DNS_SERVERS[0])
+	if err != nil {
+		return ""
+	}
+	result := dnsResponse.Answer[0].String()
+	return result
+}
 
 func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 	request_bytes, err := request.Pack() //I am not sure it is better to pack directly or using a pointer
@@ -45,8 +47,13 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in packing request, error message: %s", err)
 		return
 	}
+	ServerInput := this.SERVERS[rand.Intn(len(this.SERVERS))]
+	if ServerInput[0] <= '9' && ServerInput[0] >= '0' {
+		ServerInput = this.getServerIP(ServerInput)
+	}
+	ServerInput = "http://" + ServerInput
 	postBytesReader := bytes.NewReader(request_bytes)
-	req, err := http.NewRequest("POST", this.SERVERS[0], postBytesReader)
+	req, err := http.NewRequest("POST", ServerInput, postBytesReader) //need add random here in future
 	if err != nil {
 		SRVFAIL(w, request)
 		_D("error in creating HTTP request, error message: %s", err)
@@ -112,6 +119,7 @@ type ClientProxy struct {
 	giant       *sync.RWMutex
 	timeout     time.Duration
 	TransPro    int //specify for transmit protocol
+	DNS_SERVERS []string
 }
 
 const UDPcode = 1
@@ -125,17 +133,19 @@ func main() {
 		timeout         int
 		max_entries     int64
 		expire_interval int64
+		S_DNS_SERVERS   string
 	)
-	flag.StringVar(&S_SERVERS, "proxy", "", "we proxy requests to those servers") //Not sure use IP or URL, default server undefined
+	flag.StringVar(&S_SERVERS, "proxy", "", "we proxy requests to those servers,input like http://biilab.cn") //Not sure use IP or URL, default server undefined
 	flag.StringVar(&S_LISTEN, "listen", "[::]:53", "listen on (both tcp and udp)")
 	flag.StringVar(&S_ACCESS, "access", "127.0.0.0/8,10.0.0.0/8", "allow those networks, use 0.0.0.0/0 to allow everything")
 	flag.IntVar(&timeout, "timeout", 5, "timeout")
 	flag.Int64Var(&expire_interval, "expire_interval", 300, "delete expired entries every N seconds")
 	flag.BoolVar(&DEBUG, "debug", false, "enable/disable debug")
 	flag.Int64Var(&max_entries, "max_cache_entries", 2000000, "max cache entries")
-
+	flag.StringVar(&S_DNS_SERVERS, "dns server", "114.114.114.114:53", "DNS server for initial server lookup")
 	flag.Parse()
 	servers := strings.Split(S_SERVERS, ",")
+	dns_servers := strings.Split(S_DNS_SERVERS, ",")
 	UDPproxyer := ClientProxy{
 		giant:       new(sync.RWMutex),
 		ACCESS:      make([]*net.IPNet, 0),
@@ -145,7 +155,8 @@ func main() {
 		entries:     0,
 		timeout:     time.Duration(timeout) * time.Second,
 		max_entries: max_entries,
-		TransPro:    UDPcode}
+		TransPro:    UDPcode,
+		DNS_SERVERS: dns_servers}
 	TCPproxyer := ClientProxy{
 		giant:       new(sync.RWMutex),
 		ACCESS:      make([]*net.IPNet, 0),
@@ -155,7 +166,8 @@ func main() {
 		entries:     0,
 		timeout:     time.Duration(timeout) * time.Second,
 		max_entries: max_entries,
-		TransPro:    TCPcode}
+		TransPro:    TCPcode,
+		DNS_SERVERS: dns_servers}
 	for _, mask := range strings.Split(S_ACCESS, ",") {
 		_, cidr, err := net.ParseCIDR(mask)
 		if err != nil {
