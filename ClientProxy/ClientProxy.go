@@ -23,21 +23,36 @@ func _D(fmt string, v ...interface{}) {
 		log.Printf(fmt, v...)
 	}
 }
-func (this ClientProxy) getServerIP(domain string) string {
+func (this ClientProxy) getServerIP() []string {
+	var dns_servers []string
 	dnsClient := new(dns.Client)
 	if dnsClient == nil {
-		return ""
+		return dns_servers
 	}
 	dnsClient.WriteTimeout = this.timeout
 	dnsClient.ReadTimeout = this.timeout
-	dnsRequest := new(dns.Msg)
-	dnsRequest.SetQuestion("domain", dns.TypeA)
-	dnsResponse, _, err := dnsClient.Exchange(dnsRequest, this.DNS_SERVERS[0])
-	if err != nil {
-		return ""
+	for _, serverstring := range this.DNS_SERVERS {
+		if net.ParseIP(serverstring) != nil {
+			dns_servers = append(dns_servers, serverstring)
+		} else {
+			dnsRequest := new(dns.Msg)
+			dnsRequest.SetQuestion("domain", dns.TypeA)
+			dnsResponse, _, err := dnsClient.Exchange(dnsRequest, this.DNS_SERVERS[0])
+			if err == nil {
+				for i := 0; i < len(dnsResponse.Answer); i++ {
+					dns_servers = append(dns_servers, dnsResponse.Answer[i].String())
+				}
+			}
+			dnsRequest.SetQuestion("domain", dns.TypeAAAA)
+			dnsResponse, _, err = dnsClient.Exchange(dnsRequest, this.DNS_SERVERS[0])
+			if err == nil {
+				for i := 0; i < len(dnsResponse.Answer); i++ {
+					dns_servers = append(dns_servers, dnsResponse.Answer[i].String())
+				}
+			}
+		}
 	}
-	result := dnsResponse.Answer[0].String()
-	return result
+	return dns_servers
 }
 
 func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
@@ -47,11 +62,8 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in packing request, error message: %s", err)
 		return
 	}
-	ServerInput := this.SERVERS[rand.Intn(len(this.SERVERS))]
-	if ServerInput[0] <= '9' && ServerInput[0] >= '0' {
-		ServerInput = this.getServerIP(ServerInput)
-	}
-	ServerInput = "http://" + ServerInput
+	serverInputArray := this.getServerIP()
+	ServerInput := "http://" + serverInputArray[rand.Intn(len(serverInputArray))]
 	postBytesReader := bytes.NewReader(request_bytes)
 	req, err := http.NewRequest("POST", ServerInput, postBytesReader) //need add random here in future
 	if err != nil {
