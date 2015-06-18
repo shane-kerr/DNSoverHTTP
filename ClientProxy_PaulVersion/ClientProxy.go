@@ -82,12 +82,13 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in creating HTTP request, error message: %s", err)
 		return
 	}
+	req.Header.Add("Accept: ", "application/octet-stream")
+	req.Header.Add("Content-Type: ", "application/octet-stream")
 	if this.TransPro == UDPcode {
-		req.Header.Add("X-Proxy-DNS-Transport", "udp")
+		req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "UDP")
 	} else if this.TransPro == TCPcode {
-		req.Header.Add("X-Proxy-DNS-Transport", "tcp")
+		req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "TCP")
 	}
-	req.Header.Add("Content-Type", "application/X-DNSoverHTTP")
 
 	resp, err := http.DefaultClient.Do(req)
 	//	defer resp.Body.Close()
