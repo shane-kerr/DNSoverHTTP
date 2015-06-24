@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"dns-master"
+	"errors"
 	"flag"
 	"io/ioutil"
 	"log"
@@ -23,11 +24,11 @@ func _D(fmt string, v ...interface{}) {
 		log.Printf(fmt, v...)
 	}
 }
-func (this ClientProxy) getServerIP() []string {
+func (this ClientProxy) getServerIP() error {
 	var dns_servers []string
 	dnsClient := new(dns.Client)
 	if dnsClient == nil {
-		return dns_servers
+		return errors.New("Can not new dns Client")
 	}
 	dnsClient.WriteTimeout = this.timeout
 	dnsClient.ReadTimeout = this.timeout
@@ -48,6 +49,8 @@ func (this ClientProxy) getServerIP() []string {
 				for i := 0; i < len(dnsResponse.Answer); i++ {
 					dns_servers = append(dns_servers, dnsResponse.Answer[i].String())
 				}
+			} else {
+				return err
 			}
 			dnsRequest.SetQuestion("domain", dns.TypeAAAA)
 			dnsResponse, _, err = dnsClient.Exchange(dnsRequest, this.DNS_SERVERS[0])
@@ -55,10 +58,13 @@ func (this ClientProxy) getServerIP() []string {
 				for i := 0; i < len(dnsResponse.Answer); i++ {
 					dns_servers = append(dns_servers, "["+dnsResponse.Answer[i].String()+"]")
 				}
+			} else {
+				return err
 			}
 		}
 	}
-	return dns_servers
+	this.SERVERS = dns_servers
+	return nil
 }
 
 func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
@@ -68,13 +74,7 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in packing request, error message: %s", err)
 		return
 	}
-	serverInputArray := this.getServerIP()
-	if len(serverInputArray) == 0 {
-		SRVFAIL(w, request)
-		_D("can not get server address")
-		return
-	}
-	ServerInput := "http://" + serverInputArray[rand.Intn(len(serverInputArray))]
+	ServerInput := "http://" + this.SERVERS[rand.Intn(len(this.SERVERS))]
 	postBytesReader := bytes.NewReader(request_bytes)
 	req, err := http.NewRequest("POST", ServerInput, postBytesReader) //need add random here in future
 	if err != nil {
@@ -200,6 +200,16 @@ func main() {
 		_D("added access for %s\n", mask)
 		UDPproxyer.ACCESS = append(UDPproxyer.ACCESS, cidr)
 		TCPproxyer.ACCESS = append(TCPproxyer.ACCESS, cidr)
+	}
+	err := UDPproxyer.getServerIP()
+	if err != nil {
+		_D("can not get server address")
+		return
+	}
+	err = TCPproxyer.getServerIP()
+	if err != nil {
+		_D("can not get server address")
+		return
 	}
 	for _, addr := range strings.Split(S_LISTEN, ",") {
 		_D("listening @ %s\n", addr)
