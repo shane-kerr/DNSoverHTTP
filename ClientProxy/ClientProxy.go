@@ -82,13 +82,21 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in creating HTTP request, error message: %s", err)
 		return
 	}
-	if this.TransPro == UDPcode {
-		req.Header.Add("X-Proxy-DNS-Transport", "udp")
-	} else if this.TransPro == TCPcode {
-		req.Header.Add("X-Proxy-DNS-Transport", "tcp")
+	if this.C_version {
+		req.Header.Add("Content-Type: ", "application/octet-stream")
+		if this.TransPro == UDPcode {
+			req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "UDP")
+		} else if this.TransPro == TCPcode {
+			req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "TCP")
+		}
+	} else {
+		if this.TransPro == UDPcode {
+			req.Header.Add("X-Proxy-DNS-Transport", "udp")
+		} else if this.TransPro == TCPcode {
+			req.Header.Add("X-Proxy-DNS-Transport", "tcp")
+		}
+		req.Header.Add("Content-Type", "application/X-DNSoverHTTP")
 	}
-	req.Header.Add("Content-Type", "application/X-DNSoverHTTP")
-
 	resp, err := http.DefaultClient.Do(req)
 	//	defer resp.Body.Close()
 	if err != nil {
@@ -144,6 +152,7 @@ type ClientProxy struct {
 	timeout     time.Duration
 	TransPro    int //specify for transmit protocol
 	DNS_SERVERS []string
+	C_version   bool
 }
 
 const UDPcode = 1
@@ -158,6 +167,7 @@ func main() {
 		max_entries     int64
 		expire_interval int64
 		S_DNS_SERVERS   string
+		Support_C       bool
 	)
 	flag.StringVar(&S_SERVERS, "proxy", "", "we proxy requests to those servers,input like http://biilab.cn") //Not sure use IP or URL, default server undefined
 	flag.StringVar(&S_LISTEN, "listen", "[::]:53", "listen on (both tcp and udp)")
@@ -167,6 +177,7 @@ func main() {
 	flag.BoolVar(&DEBUG, "debug", false, "enable/disable debug")
 	flag.Int64Var(&max_entries, "max_cache_entries", 2000000, "max cache entries")
 	flag.StringVar(&S_DNS_SERVERS, "dns_server", "114.114.114.114:53", "DNS server for initial server lookup")
+	flag.BoolVar(&Support_C, "support_version", false, "Whether support Paul Vixie's C version")
 	flag.Parse()
 	servers := strings.Split(S_SERVERS, ",")
 	dns_servers := strings.Split(S_DNS_SERVERS, ",")
@@ -180,7 +191,8 @@ func main() {
 		timeout:     time.Duration(timeout) * time.Second,
 		max_entries: max_entries,
 		TransPro:    UDPcode,
-		DNS_SERVERS: dns_servers}
+		DNS_SERVERS: dns_servers,
+		C_version:   Support_C}
 	TCPproxyer := ClientProxy{
 		giant:       new(sync.RWMutex),
 		ACCESS:      make([]*net.IPNet, 0),
@@ -191,7 +203,8 @@ func main() {
 		timeout:     time.Duration(timeout) * time.Second,
 		max_entries: max_entries,
 		TransPro:    TCPcode,
-		DNS_SERVERS: dns_servers}
+		DNS_SERVERS: dns_servers,
+		C_version:   Support_C}
 	for _, mask := range strings.Split(S_ACCESS, ",") {
 		_, cidr, err := net.ParseCIDR(mask)
 		if err != nil {
