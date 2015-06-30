@@ -35,12 +35,7 @@ func (this ClientProxy) getServerIP() error {
 	for _, serverstring := range this.SERVERS {
 		ipaddress := net.ParseIP(serverstring)
 		if ipaddress != nil {
-			if len(ipaddress) == 4 {
-				dns_servers = append(dns_servers, serverstring)
-			} else {
-				serverstring = "[" + serverstring + "]"
-				dns_servers = append(dns_servers, serverstring)
-			}
+			dns_servers = append(dns_servers, serverstring)
 		} else {
 			dnsRequest := new(dns.Msg)
 			dnsRequest.SetQuestion("domain", dns.TypeA)
@@ -74,20 +69,33 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in packing request, error message: %s", err)
 		return
 	}
-	ServerInput := "http://" + this.SERVERS[rand.Intn(len(this.SERVERS))]
+	ServerInput := this.SERVERS[rand.Intn(len(this.SERVERS))]
+	ipaddress := net.ParseIP(ServerInput)
+	var ServerInputurl string
+	if ipaddress.To4() != nil {
+		ServerInputurl = "http://" + ServerInput
+	} else {
+		ServerInputurl = "http://[" + ServerInput + "]"
+	}
+
 	postBytesReader := bytes.NewReader(request_bytes)
-	req, err := http.NewRequest("POST", ServerInput, postBytesReader) //need add random here in future
+	if this.C_version {
+		ServerInputurl = ServerInputurl + "/proxy_dns"
+	}
+	req, err := http.NewRequest("POST", ServerInputurl, postBytesReader) //need add random here in future
 	if err != nil {
 		SRVFAIL(w, request)
 		_D("error in creating HTTP request, error message: %s", err)
 		return
 	}
 	if this.C_version {
+		req.Header.Add("Host", ServerInput)
+		req.Header.Add("Accept: ", "application/octet-stream")
 		req.Header.Add("Content-Type: ", "application/octet-stream")
 		if this.TransPro == UDPcode {
-			req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "UDP")
+			req.Header.Add("Proxy-DNS-Transport", "UDP")
 		} else if this.TransPro == TCPcode {
-			req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "TCP")
+			req.Header.Add("Proxy-DNS-Transport", "TCP")
 		}
 	} else {
 		if this.TransPro == UDPcode {
