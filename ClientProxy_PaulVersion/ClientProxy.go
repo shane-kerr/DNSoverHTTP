@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"dns-master"
-	"errors"
 	"flag"
 	"io/ioutil"
 	"log"
@@ -24,18 +23,23 @@ func _D(fmt string, v ...interface{}) {
 		log.Printf(fmt, v...)
 	}
 }
-func (this ClientProxy) getServerIP() error {
+func (this ClientProxy) getServerIP() []string {
 	var dns_servers []string
 	dnsClient := new(dns.Client)
 	if dnsClient == nil {
-		return errors.New("Can not new dns Client")
+		return dns_servers
 	}
 	dnsClient.WriteTimeout = this.timeout
 	dnsClient.ReadTimeout = this.timeout
 	for _, serverstring := range this.SERVERS {
 		ipaddress := net.ParseIP(serverstring)
 		if ipaddress != nil {
-			dns_servers = append(dns_servers, serverstring)
+			if len(ipaddress) == 4 {
+				dns_servers = append(dns_servers, serverstring)
+			} else {
+				serverstring = "[" + serverstring + "]"
+				dns_servers = append(dns_servers, serverstring)
+			}
 		} else {
 			dnsRequest := new(dns.Msg)
 			dnsRequest.SetQuestion("domain", dns.TypeA)
@@ -44,8 +48,6 @@ func (this ClientProxy) getServerIP() error {
 				for i := 0; i < len(dnsResponse.Answer); i++ {
 					dns_servers = append(dns_servers, dnsResponse.Answer[i].String())
 				}
-			} else {
-				return err
 			}
 			dnsRequest.SetQuestion("domain", dns.TypeAAAA)
 			dnsResponse, _, err = dnsClient.Exchange(dnsRequest, this.DNS_SERVERS[0])
@@ -53,13 +55,10 @@ func (this ClientProxy) getServerIP() error {
 				for i := 0; i < len(dnsResponse.Answer); i++ {
 					dns_servers = append(dns_servers, "["+dnsResponse.Answer[i].String()+"]")
 				}
-			} else {
-				return err
 			}
 		}
 	}
-	this.SERVERS = dns_servers
-	return nil
+	return dns_servers
 }
 
 func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
@@ -69,42 +68,28 @@ func (this ClientProxy) ServeDNS(w dns.ResponseWriter, request *dns.Msg) {
 		_D("error in packing request, error message: %s", err)
 		return
 	}
-	ServerInput := this.SERVERS[rand.Intn(len(this.SERVERS))]
-	ipaddress := net.ParseIP(ServerInput)
-	var ServerInputurl string
-	if ipaddress.To4() != nil {
-		ServerInputurl = "http://" + ServerInput
-	} else {
-		ServerInputurl = "http://[" + ServerInput + "]"
+	serverInputArray := this.getServerIP()
+	if len(serverInputArray) == 0 {
+		SRVFAIL(w, request)
+		_D("can not get server address")
+		return
 	}
-
+	ServerInput := "http://" + serverInputArray[rand.Intn(len(serverInputArray))]
 	postBytesReader := bytes.NewReader(request_bytes)
-	if this.C_version {
-		ServerInputurl = ServerInputurl + "/proxy_dns"
-	}
-	req, err := http.NewRequest("POST", ServerInputurl, postBytesReader) //need add random here in future
+	req, err := http.NewRequest("POST", ServerInput, postBytesReader) //need add random here in future
 	if err != nil {
 		SRVFAIL(w, request)
 		_D("error in creating HTTP request, error message: %s", err)
 		return
 	}
-	if this.C_version {
-		req.Header.Add("Host", ServerInput)
-		req.Header.Add("Accept: ", "application/octet-stream")
-		req.Header.Add("Content-Type: ", "application/octet-stream")
-		if this.TransPro == UDPcode {
-			req.Header.Add("Proxy-DNS-Transport", "UDP")
-		} else if this.TransPro == TCPcode {
-			req.Header.Add("Proxy-DNS-Transport", "TCP")
-		}
-	} else {
-		if this.TransPro == UDPcode {
-			req.Header.Add("X-Proxy-DNS-Transport", "udp")
-		} else if this.TransPro == TCPcode {
-			req.Header.Add("X-Proxy-DNS-Transport", "tcp")
-		}
-		req.Header.Add("Content-Type", "application/X-DNSoverHTTP")
+	req.Header.Add("Accept: ", "application/octet-stream")
+	req.Header.Add("Content-Type: ", "application/octet-stream")
+	if this.TransPro == UDPcode {
+		req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "UDP")
+	} else if this.TransPro == TCPcode {
+		req.Header.Add("HTTP_PROXY_DNS_TRANSPORT", "TCP")
 	}
+
 	resp, err := http.DefaultClient.Do(req)
 	//	defer resp.Body.Close()
 	if err != nil {
@@ -160,7 +145,6 @@ type ClientProxy struct {
 	timeout     time.Duration
 	TransPro    int //specify for transmit protocol
 	DNS_SERVERS []string
-	C_version   bool
 }
 
 const UDPcode = 1
@@ -175,7 +159,6 @@ func main() {
 		max_entries     int64
 		expire_interval int64
 		S_DNS_SERVERS   string
-		Support_C       bool
 	)
 	flag.StringVar(&S_SERVERS, "proxy", "", "we proxy requests to those servers,input like http://biilab.cn") //Not sure use IP or URL, default server undefined
 	flag.StringVar(&S_LISTEN, "listen", "[::]:53", "listen on (both tcp and udp)")
@@ -185,7 +168,6 @@ func main() {
 	flag.BoolVar(&DEBUG, "debug", false, "enable/disable debug")
 	flag.Int64Var(&max_entries, "max_cache_entries", 2000000, "max cache entries")
 	flag.StringVar(&S_DNS_SERVERS, "dns_server", "114.114.114.114:53", "DNS server for initial server lookup")
-	flag.BoolVar(&Support_C, "support_version", false, "Whether support Paul Vixie's C version")
 	flag.Parse()
 	servers := strings.Split(S_SERVERS, ",")
 	dns_servers := strings.Split(S_DNS_SERVERS, ",")
@@ -199,8 +181,7 @@ func main() {
 		timeout:     time.Duration(timeout) * time.Second,
 		max_entries: max_entries,
 		TransPro:    UDPcode,
-		DNS_SERVERS: dns_servers,
-		C_version:   Support_C}
+		DNS_SERVERS: dns_servers}
 	TCPproxyer := ClientProxy{
 		giant:       new(sync.RWMutex),
 		ACCESS:      make([]*net.IPNet, 0),
@@ -211,8 +192,7 @@ func main() {
 		timeout:     time.Duration(timeout) * time.Second,
 		max_entries: max_entries,
 		TransPro:    TCPcode,
-		DNS_SERVERS: dns_servers,
-		C_version:   Support_C}
+		DNS_SERVERS: dns_servers}
 	for _, mask := range strings.Split(S_ACCESS, ",") {
 		_, cidr, err := net.ParseCIDR(mask)
 		if err != nil {
@@ -221,16 +201,6 @@ func main() {
 		_D("added access for %s\n", mask)
 		UDPproxyer.ACCESS = append(UDPproxyer.ACCESS, cidr)
 		TCPproxyer.ACCESS = append(TCPproxyer.ACCESS, cidr)
-	}
-	err := UDPproxyer.getServerIP()
-	if err != nil {
-		_D("can not get server address")
-		return
-	}
-	err = TCPproxyer.getServerIP()
-	if err != nil {
-		_D("can not get server address")
-		return
 	}
 	for _, addr := range strings.Split(S_LISTEN, ",") {
 		_D("listening @ %s\n", addr)

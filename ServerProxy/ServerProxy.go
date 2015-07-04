@@ -51,8 +51,8 @@ func (this Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown transport protocol", 415)
 		return
 	}
-	contentTypeStr := r.Header.Get("application/X-DNSoverHTTP")
-	if contentTypeStr != "Content-Type" {
+	contentTypeStr := r.Header.Get("Content-Type")
+	if contentTypeStr != "application/X-DNSoverHTTP" {
 		_D("Content-Type illegal")
 		http.Error(w, "unknown content type", 415)
 		return
@@ -86,12 +86,19 @@ func (this Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dnsClient.WriteTimeout = this.timeout
 	dnsClient.Net = TransProString
 	//will use a parameter to let user address resolver in future
-	dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[rand.Intn(this.s_len)])
+	dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[rand.Intn(len(this.SERVERS))])
+	//dnsResponse, RTT, err := dnsClient.Exchange(&dnsRequest, this.SERVERS[0])
 	if err != nil {
 		_D("error in communicate with resolver, error message: %s", err)
 		http.Error(w, "Server Error", 500)
+		return
 	} else {
 		_D("request took %s", RTT)
+	}
+	if dnsResponse == nil {
+		_D("no response back")
+		http.Error(w, "Server Error:No Recursive response", 500)
+		return
 	}
 	response_bytes, err := dnsResponse.Pack()
 	if err != nil {
@@ -114,11 +121,11 @@ func main() {
 		max_entries int64
 		ACCESS      string
 	)
-	flag.StringVar(&S_SERVERS, "proxy", "", "we proxy requests to those servers") //Not sure use IP or URL, default server undefined
+	flag.StringVar(&S_SERVERS, "proxy", "127.0.0.1:53", "we proxy requests to those servers") //Not sure use IP or URL, default server undefined
 	flag.IntVar(&timeout, "timeout", 5, "timeout")
 	flag.BoolVar(&DEBUG, "debug", false, "enable/disable debug")
 	flag.Int64Var(&max_entries, "max_cache_entries", 2000000, "max cache entries")
-	flag.StringVar(&ACCESS, "access", "127.0.0.0/8,10.0.0.0/8", "allow those networks, use 0.0.0.0/0 to allow everything")
+	flag.StringVar(&ACCESS, "access", "0.0.0.0/0", "allow those networks, use 0.0.0.0/0 to allow everything")
 	flag.Parse()
 	servers := strings.Split(S_SERVERS, ",")
 	proxyServer := Server{
